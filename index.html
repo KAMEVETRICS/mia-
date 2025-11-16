@@ -1,0 +1,1395 @@
+<!--
+threejs-temple-run-simple.html
+A single-file, minimal 3D endless-runner inspired by Temple Run using Three.js.
+
+How to run:
+1) Save this file as threejs-temple-run-simple.html
+2) Serve it from a local HTTP server (module imports require a server):
+   - Python: python3 -m http.server 8000
+   - Node: npx serve .
+3) Open http://localhost:8000/threejs-temple-run-simple.html in your browser.
+
+Controls:
+- Left / A  : move left lane
+- Right / D : move right lane
+- Space     : jump
+- Touch: tap left/right side to move lanes; swipe up to jump
+
+Notes on extending with a backend (Prisma):
+- You can POST high scores to /api/score from the browser when game ends.
+- Example Prisma model (Postgres):
+
+  model Score {
+    id        Int      @id @default(autoincrement())
+    player    String
+    value     Int
+    createdAt DateTime @default(now())
+  }
+
+- Example express endpoint:
+  POST /api/score { player, value }
+  -> create with prisma.score.create({ data: { player, value } })
+
+Enjoy! Now the app code follows.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Temple Run Style — Endless Runner</title>
+  <style>
+    html,body{height:100%;margin:0;background:#200b01;color:#fff;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif}
+    #ui{position:fixed;left:20px;top:20px;z-index:10;background:rgba(0,0,0,0.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:20px 24px;box-shadow:0 8px 32px rgba(0,0,0,0.4),0 2px 8px rgba(0,0,0,0.2),inset 0 1px 0 rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.1);min-width:200px}
+    #score{font-size:24px;font-weight:700;text-shadow:0 2px 8px rgba(0,0,0,0.8);letter-spacing:0.5px;margin-bottom:8px;color:#fff;line-height:1.3}
+    #speed{font-size:15px;opacity:0.85;margin-top:0;margin-bottom:8px;font-weight:500;letter-spacing:0.3px;color:rgba(255,255,255,0.9);text-shadow:0 1px 4px rgba(0,0,0,0.6)}
+    #coins{font-size:15px;opacity:0.85;margin-top:0;margin-bottom:16px;font-weight:500;letter-spacing:0.3px;color:rgba(255,255,255,0.9);text-shadow:0 1px 4px rgba(0,0,0,0.6)}
+    #powerupStats{margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1);font-size:13px;opacity:0.9}
+    #powerupStats div{margin-top:8px;font-weight:500;letter-spacing:0.2px;color:rgba(255,255,255,0.85);text-shadow:0 1px 3px rgba(0,0,0,0.5)}
+    #powerupStats div:first-child{margin-top:0}
+    .powerupCount{color:#200b01;font-weight:700;text-shadow:0 0 8px rgba(32,11,1,0.5),0 2px 4px rgba(0,0,0,0.8);font-size:14px;letter-spacing:0.5px}
+    #modeSelectionScreen{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;z-index:13;width:90%;max-width:800px}
+    #modeSelectionScreen h1{font-size:32px;margin:0 0 24px;text-shadow:0 2px 8px rgba(0,0,0,0.8)}
+    .modeCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;margin-top:32px}
+    .modeCard{background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:24px;cursor:pointer;transition:all 0.3s ease;border:2px solid rgba(255,255,255,0.2);box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+    .modeCard:hover{transform:translateY(-4px);border-color:rgba(255,255,255,0.4);box-shadow:0 12px 40px rgba(0,0,0,0.6)}
+    .modeCard.selected{border-color:rgba(255,255,255,0.6);background:rgba(255,255,255,0.1)}
+    .modeCardImage{width:100%;height:180px;object-fit:cover;border-radius:12px;margin-bottom:16px;background:rgba(255,255,255,0.05)}
+    .modeCardTitle{font-size:24px;font-weight:700;margin-bottom:8px;text-shadow:0 2px 4px rgba(0,0,0,0.8)}
+    .modeCardDescription{font-size:14px;opacity:0.8;line-height:1.5}
+    #startScreen{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;z-index:12;display:none;background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:32px;max-width:500px;width:90%}
+    #startScreen h1{font-size:36px;margin:0 0 8px}
+    #startScreen p{margin:4px 0 16px}
+    #instructions{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px;margin:20px 0;text-align:left;border:1px solid rgba(255,255,255,0.1)}
+    #instructions h3{font-size:18px;margin:0 0 12px;color:#fff;text-align:center;text-shadow:0 2px 4px rgba(0,0,0,0.8)}
+    #instructions ul{list-style:none;padding:0;margin:0}
+    #instructions li{margin:8px 0;padding-left:24px;position:relative;font-size:14px;line-height:1.6;opacity:0.9}
+    #instructions li:before{content:"•";position:absolute;left:0;color:rgba(255,255,255,0.6);font-size:20px}
+    #instructions .instruction-section{margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1)}
+    #instructions .instruction-section:first-child{border-top:none;margin-top:0;padding-top:0}
+    #pauseMenu{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;z-index:14;display:none;background:rgba(0,0,0,0.8);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:32px;min-width:280px}
+    #pauseMenu h2{font-size:28px;margin:0 0 24px;text-shadow:0 2px 8px rgba(0,0,0,0.8)}
+    #pauseMenu .btn{margin:8px;min-width:200px}
+    #pauseBtn{position:fixed;top:20px;right:20px;z-index:11;background:rgba(0,0,0,0.6);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:2px solid rgba(255,255,255,0.3);border-radius:12px;padding:12px 20px;color:#fff;font-size:16px;font-weight:600;cursor:pointer;transition:all 0.3s ease;display:none}
+    #pauseBtn:hover{background:rgba(0,0,0,0.8);border-color:rgba(255,255,255,0.5);transform:scale(1.05)}
+    #message{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);text-align:center;z-index:11}
+    #message h1{font-size:36px;margin:0 0 8px}
+    #message p{margin:4px 0}
+    canvas{display:block}
+    #controls{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:10;display:grid;grid-template-columns:repeat(3,60px);grid-template-rows:repeat(2,60px);gap:4px;place-items:center}
+    .btn{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.06);padding:0;border-radius:8px;color:#fff;width:100%;height:100%;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+    #startBtn{width:200px;height:60px;font-size:20px;font-weight:600;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);padding:12px 24px;margin:0 auto}
+    #leftBtn{grid-column:1;grid-row:1}
+    #jumpBtn{grid-column:2;grid-row:1}
+    #rightBtn{grid-column:3;grid-row:1}
+    #slideBtn{grid-column:2;grid-row:2}
+    #mobileInstructions{position:fixed;bottom:100px;left:50%;transform:translateX(-50%);z-index:10;text-align:center;font-size:14px;opacity:0.8;display:none}
+    /* Hide controls on desktop, show on mobile */
+    @media (min-width: 769px) {
+      #controls{display:none}
+      #mobileInstructions{display:none}
+    }
+    /* Mobile optimizations */
+    @media (max-width: 768px) {
+      #controls{display:none !important}
+      #mobileInstructions{display:none !important}
+      #pauseBtn{top:12px;right:12px;padding:10px 16px;font-size:14px;border-radius:10px}
+      #pauseMenu{padding:24px;min-width:240px}
+      #pauseMenu h2{font-size:24px;margin:0 0 20px}
+      #pauseMenu .btn{min-width:180px;padding:12px}
+      /* Compact mobile UI - reduced padding and spacing */
+      #ui{left:50%;top:12px;transform:translateX(-50%);padding:10px 14px;border-radius:12px;min-width:160px;max-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.5),0 1px 4px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.1)}
+      #score{font-size:18px;font-weight:700;margin-bottom:4px;line-height:1.2;letter-spacing:0.3px}
+      #speed{font-size:12px;margin-bottom:4px;opacity:0.9;letter-spacing:0.2px}
+      #coins{font-size:12px;margin-bottom:8px;opacity:0.9;letter-spacing:0.2px}
+      #powerupStats{margin-top:8px;padding-top:8px;font-size:11px}
+      #powerupStats div{margin-top:4px;letter-spacing:0.1px}
+      .powerupCount{font-size:12px;letter-spacing:0.3px}
+      /* Adjust mode selection for mobile */
+      #modeSelectionScreen h1{font-size:24px;margin:0 0 16px}
+      .modeCards{grid-template-columns:1fr;gap:16px;margin-top:24px}
+      .modeCard{padding:16px}
+      .modeCardImage{height:120px}
+      .modeCardTitle{font-size:20px}
+      .modeCardDescription{font-size:12px}
+      /* Adjust start screen for mobile */
+      #startScreen{padding:24px;max-width:90%}
+      #startScreen h1{font-size:28px}
+      #startScreen p{font-size:14px;margin:8px 0 12px}
+      #instructions{padding:16px;margin:16px 0}
+      #instructions h3{font-size:16px;margin:0 0 10px}
+      #instructions li{font-size:12px;margin:6px 0;line-height:1.5}
+      #startBtn{width:160px;height:50px;font-size:18px;padding:10px 20px}
+      /* Adjust game over message for mobile */
+      #message h1{font-size:28px}
+      #message p{font-size:14px}
+    }
+    /* Extra small mobile devices */
+    @media (max-width: 480px) {
+      #ui{top:8px;padding:8px 12px;min-width:140px;max-width:160px;border-radius:10px}
+      #score{font-size:16px;margin-bottom:3px}
+      #speed{font-size:11px;margin-bottom:3px}
+      #coins{font-size:11px;margin-bottom:6px}
+      #powerupStats{margin-top:6px;padding-top:6px;font-size:10px}
+      #powerupStats div{margin-top:3px}
+      .powerupCount{font-size:11px}
+    }
+    /* Footer */
+    #footer{position:fixed;bottom:16px;right:16px;z-index:10;font-size:12px;opacity:0.7;color:rgba(255,255,255,0.8);text-align:right;text-shadow:0 1px 3px rgba(0,0,0,0.5)}
+    #footer a{color:rgba(255,255,255,0.9);text-decoration:none;transition:opacity 0.2s ease}
+    #footer a:hover{opacity:1;text-decoration:underline}
+    @media (max-width: 768px) {
+      #footer{font-size:11px;bottom:12px;right:12px}
+    }
+  </style>
+</head>
+<body>
+  <div id="ui" style="display:none">
+    <div id="score">Score: 0</div>
+    <div id="speed">Speed: 1.0x</div>
+    <div id="coins">Coins: 0</div>
+    <div id="powerupStats">
+      <div>Coin: <span id="coinCount" class="powerupCount">0</span></div>
+    </div>
+  </div>
+  <div id="modeSelectionScreen" style="display:block">
+    <h1>Select Game Mode</h1>
+    <div class="modeCards">
+      <div class="modeCard" data-mode="austin">
+        <img src="block.png" alt="Block Mode" class="modeCardImage" onerror="this.style.display='none'">
+        <div class="modeCardTitle">Block Mode</div>
+        <div class="modeCardDescription">Assist the player</div>
+      </div>
+      <div class="modeCard" data-mode="ben">
+        <img src="swarm.jpg" alt="Swarm Mode" class="modeCardImage" onerror="this.style.display='none'">
+        <div class="modeCardTitle">Swarm Mode</div>
+        <div class="modeCardDescription">Join the Swarm</div>
+      </div>
+    </div>
+  </div>
+  <div id="startScreen" style="display:none">
+    <h1 id="startTitle">Temple Run Style</h1>
+    <p id="startText">Press Start to Begin</p>
+    <div id="instructions">
+      <div class="instruction-section">
+        <h3>Controls</h3>
+        <ul>
+          <li><strong>Desktop:</strong> Arrow Keys or WASD to move, Space to jump, Down/S to slide</li>
+          <li><strong>Mobile:</strong> Swipe left/right to change lanes, swipe up to jump, swipe down to slide</li>
+          <li><strong>Pause:</strong> Press ESC or click the pause button (top-right)</li>
+        </ul>
+      </div>
+      <div class="instruction-section">
+        <h3>How to Play</h3>
+        <ul>
+          <li>Collect brown coins to increase your score</li>
+          <li>Game speed increases as you progress - stay alive as long as possible!</li>
+          <li>Use pause menu to resume or return to mode selection</li>
+        </ul>
+      </div>
+    </div>
+    <button id="startBtn" class="btn">Start Game</button>
+  </div>
+  <div id="message" style="display:none"><h1 id="msgTitle">Game Over</h1><p id="msgText"></p><button id="restart" class="btn">Restart</button></div>
+  <button id="pauseBtn">⏸ Pause</button>
+  <div id="pauseMenu">
+    <h2>Game Paused</h2>
+    <button id="resumeBtn" class="btn">Resume</button>
+    <button id="menuBtn" class="btn">Back to Menu</button>
+  </div>
+  <div id="mobileInstructions">
+    <div>Swipe left/right to change lanes</div>
+    <div>Swipe up to jump • Swipe down to slide</div>
+    <div>Or tap left/right side of screen</div>
+  </div>
+  <div id="controls">
+    <button id="leftBtn" class="btn">◀</button>
+    <button id="jumpBtn" class="btn">↑</button>
+    <button id="rightBtn" class="btn">▶</button>
+    <div></div>
+    <button id="slideBtn" class="btn">↓</button>
+    <div></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script>
+
+    // --- Game Mode Configuration ---
+    let currentMode = null; // Will be set when user selects a mode
+    
+    // Mode color configurations
+    const modeConfigs = {
+      ben: {
+        background: 0x200b01,  // Brown
+        fog: 0x200b01,          // Brown
+        ground: 0xFADADD        // Pink
+      },
+      austin: {
+        background: 0x1a1a2e,   // Dark blue (temporary)
+        fog: 0x1a1a2e,          // Dark blue (temporary)
+        ground: 0x4a90e2       // Blue (temporary)
+      }
+    };
+    
+    // Function to apply mode colors and swap character
+    function applyModeColors(mode) {
+      const config = modeConfigs[mode];
+      if (!config) return;
+      
+      // Update scene background and fog
+      if (scene) {
+        scene.background.setHex(config.background);
+        scene.fog.color.setHex(config.fog);
+      }
+      
+      // Update HTML body background
+      document.body.style.background = '#' + config.background.toString(16).padStart(6, '0');
+      
+      // Update ground material
+      if (groundMat) {
+        groundMat.color.setHex(config.ground);
+      }
+      
+      // Swap character only for Swarm Mode (ben) - Block Mode (austin) keeps original robot
+      if (player && scene && mode === 'ben') {
+        const currentPosition = player.position.clone();
+        const currentRotation = player.rotation.clone();
+        const currentScale = player.scale.clone();
+        
+        // Remove all children from existing player group
+        while(player.children.length > 0) {
+          player.remove(player.children[0]);
+        }
+        
+        // Swarm Mode - use ant character
+        characterData = createAntCharacter();
+        
+        // Update material references
+        robotMat = characterData.robotMat;
+        robotAccentMat = characterData.robotAccentMat;
+        robotDarkMat = characterData.robotDarkMat;
+        eyeMat = characterData.eyeMat;
+        
+        // Add new character's children to existing player group
+        const newPlayer = characterData.player;
+        newPlayer.children.forEach(child => {
+          player.add(child);
+        });
+        
+        // Copy all animation references (critical for animations to work)
+        player.body = newPlayer.body;
+        player.head = newPlayer.head;
+        player.leftArm = newPlayer.leftArm;
+        player.rightArm = newPlayer.rightArm;
+        player.leftLeg = newPlayer.leftLeg;
+        player.rightLeg = newPlayer.rightLeg;
+        player.eyes = newPlayer.eyes;
+        if (newPlayer.allLegs) player.allLegs = newPlayer.allLegs;
+        
+        // Restore position, rotation, and scale
+        player.position.copy(currentPosition);
+        player.rotation.copy(currentRotation);
+        player.scale.copy(currentScale);
+        player.castShadow = true;
+      }
+      // Block Mode (austin) - no character swap, keeps original robot
+    }
+
+    // --- Basic three setup ---
+    const scene = new THREE.Scene();
+    // Initial colors (will be updated when mode is selected)
+    scene.fog = new THREE.FogExp2(0x200b01, 0.02);
+    scene.background = new THREE.Color(0x200b01);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 6, -12); // Start behind player
+
+    const renderer = new THREE.WebGLRenderer({antialias:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    window.addEventListener('resize', ()=>{
+      camera.aspect = window.innerWidth/window.innerHeight; 
+      camera.updateProjectionMatrix(); 
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- Lights ---
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x111122, 0.6);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(5, 10, 7);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(1024,1024);
+    scene.add(dir);
+
+    // --- Runner lanes ---
+    const lanes = [-3, 0, 3];
+    const laneCount = lanes.length;
+    
+    // Path is straight - no turning
+    const pathRotation = 0; // Always straight
+
+    // --- Ground tiles ---
+    const tilePool = [];
+    const tileLength = 10;
+    const tilesAhead = 12;
+    const groundMat = new THREE.MeshStandardMaterial({color:0xFADADD, roughness:0.9}); // Pink #FADADD
+
+    for(let i=0;i<tilesAhead;i++){
+      const geo = new THREE.BoxGeometry(10, 0.2, tileLength);
+      const mesh = new THREE.Mesh(geo, groundMat);
+      mesh.receiveShadow = true;
+      // Position tiles ahead and behind player (player starts at z=0)
+      mesh.position.set(0, -1, (i - tilesAhead/2) * tileLength);
+      scene.add(mesh);
+      tilePool.push(mesh);
+    }
+
+    // --- Player Character Creation Functions ---
+    function createRobotCharacter() {
+      const player = new THREE.Group();
+      const robotMat = new THREE.MeshStandardMaterial({color:0x4a90e2, metalness:0.8, roughness:0.3});
+      const robotAccentMat = new THREE.MeshStandardMaterial({color:0xff6b6b, metalness:0.7, roughness:0.4});
+      const robotDarkMat = new THREE.MeshStandardMaterial({color:0x2c3e50, metalness:0.9, roughness:0.2});
+      
+      // Robot body (main torso)
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.2, 0.8), robotMat);
+      body.position.y = 0.6;
+      body.castShadow = true;
+      player.add(body);
+      
+      // Robot head
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), robotMat);
+      head.position.y = 1.5;
+      head.castShadow = true;
+      player.add(head);
+      
+      // Eyes
+      const eyeMat = new THREE.MeshStandardMaterial({color:0x00ff00, emissive:0x00ff00, emissiveIntensity:0.5});
+      const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), eyeMat);
+      leftEye.position.set(-0.15, 1.5, 0.36);
+      player.add(leftEye);
+      const rightEye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), eyeMat);
+      rightEye.position.set(0.15, 1.5, 0.36);
+      player.add(rightEye);
+      
+      // Left arm
+      const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, 0.3), robotAccentMat);
+      leftArm.position.set(-0.65, 0.6, 0);
+      leftArm.castShadow = true;
+      player.add(leftArm);
+      
+      // Right arm
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, 0.3), robotAccentMat);
+      rightArm.position.set(0.65, 0.6, 0);
+      rightArm.castShadow = true;
+      player.add(rightArm);
+      
+      // Left leg
+      const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.7, 0.35), robotDarkMat);
+      leftLeg.position.set(-0.25, -0.35, 0);
+      leftLeg.castShadow = true;
+      player.add(leftLeg);
+      
+      // Right leg
+      const rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.7, 0.35), robotDarkMat);
+      rightLeg.position.set(0.25, -0.35, 0);
+      rightLeg.castShadow = true;
+      player.add(rightLeg);
+      
+      // Store references for animation
+      player.body = body;
+      player.head = head;
+      player.leftArm = leftArm;
+      player.rightArm = rightArm;
+      player.leftLeg = leftLeg;
+      player.rightLeg = rightLeg;
+      player.eyes = [leftEye, rightEye];
+      
+      return { player, robotMat, robotAccentMat, robotDarkMat, eyeMat };
+    }
+    
+    function createAntCharacter() {
+      const player = new THREE.Group();
+      const antBodyMat = new THREE.MeshStandardMaterial({color:0x8b4513, metalness:0.4, roughness:0.6});
+      const antHeadMat = new THREE.MeshStandardMaterial({color:0x654321, metalness:0.3, roughness:0.7});
+      const antLegMat = new THREE.MeshStandardMaterial({color:0x5d4037, metalness:0.5, roughness:0.5});
+      const antEyeMat = new THREE.MeshStandardMaterial({color:0x000000, emissive:0x1a1a1a, emissiveIntensity:0.3});
+      
+      // Ant head (rounded, positioned forward)
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 12), antHeadMat);
+      head.position.y = 0.7;
+      head.position.z = 0.25;
+      head.castShadow = true;
+      player.add(head);
+      
+      // Ant body segments (thorax - middle segment)
+      const thorax = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 12), antBodyMat);
+      thorax.position.y = 0.5;
+      thorax.scale.set(1, 1.3, 1);
+      thorax.castShadow = true;
+      player.add(thorax);
+      
+      // Abdomen (rear segment, slightly larger)
+      const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 12), antBodyMat);
+      abdomen.position.y = 0.25;
+      abdomen.position.z = -0.15;
+      abdomen.scale.set(1, 1.4, 1.1);
+      abdomen.castShadow = true;
+      player.add(abdomen);
+      
+      // Use thorax as body reference for animation compatibility
+      const body = thorax;
+      
+      // Pre-calc proportions for antennas
+      // Head: sphere with radius 0.35, so width = 0.7, height = 0.7
+      const headW = 0.7;
+      const headH = 0.7;
+      
+      // =========================================================
+      // ANTENNAS (2) - based on reference code
+      // =========================================================
+      const antennaLength = headH * 0.4; // 40% of head height
+      const antennaThickness = headW * 0.1; // 10% of head width
+      
+      function createAntenna(xSign) {
+        // Tapered cylinder (thinner at tip)
+        const geo = new THREE.CylinderGeometry(
+          antennaThickness,
+          antennaThickness * 0.7, // Taper to 70% at tip
+          antennaLength,
+          12
+        );
+        const antMesh = new THREE.Mesh(geo, antLegMat);
+        
+        // Position relative to head (in head's local space)
+        antMesh.position.set(
+          xSign * headW * 0.3,  // horizontal spacing: ±0.3 × head width
+          headH * 0.5,          // top of the head: 0.5 × head height
+          -headW * 0.05         // slightly forward: -0.05 × head width
+        );
+        
+        // Rotation: outward tilt and forward tilt
+        antMesh.rotation.z = xSign * 0.25;  // outward tilt (left: -0.25, right: +0.25)
+        antMesh.rotation.x = -0.4;          // forward tilt (~23°)
+        
+        antMesh.castShadow = true;
+        antMesh.receiveShadow = true;
+        
+        return antMesh;
+      }
+      
+      const antLeft = createAntenna(-1);
+      const antRight = createAntenna(1);
+      
+      // Add antennas to HEAD (not directly to player) - they move with head
+      head.add(antLeft);
+      head.add(antRight);
+      
+      // Compound eyes (black, slightly glowing)
+      const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), antEyeMat);
+      leftEye.position.set(-0.12, 0.75, 0.3);
+      player.add(leftEye);
+      const rightEye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), antEyeMat);
+      rightEye.position.set(0.12, 0.75, 0.3);
+      player.add(rightEye);
+      
+      // Ant legs (6 legs total - using front and middle pairs for animation compatibility)
+      const legPositions = [
+        { x: -0.25, y: 0.4, z: 0.15 },   // Front left (used as leftArm)
+        { x: 0.25, y: 0.4, z: 0.15 },    // Front right (used as rightArm)
+        { x: -0.3, y: 0.3, z: 0 },       // Middle left (used as leftLeg)
+        { x: 0.3, y: 0.3, z: 0 },        // Middle right (used as rightLeg)
+        { x: -0.25, y: 0.15, z: -0.15 }, // Back left
+        { x: 0.25, y: 0.15, z: -0.15 }   // Back right
+      ];
+      
+      const legs = [];
+      legPositions.forEach((pos, i) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.35, 6), antLegMat);
+        leg.position.set(pos.x, pos.y - 0.15, pos.z);
+        leg.rotation.z = Math.abs(pos.x) * 0.3;
+        leg.castShadow = true;
+        player.add(leg);
+        legs.push(leg);
+      });
+      
+      // Use front legs as leftArm/rightArm for animation compatibility
+      const leftArm = legs[0];
+      const rightArm = legs[1];
+      // Use middle legs as leftLeg/rightLeg for animation compatibility
+      const leftLeg = legs[2];
+      const rightLeg = legs[3];
+      
+      // Store references for animation (same structure as robot)
+      player.body = body;
+      player.head = head;
+      player.leftArm = leftArm;
+      player.rightArm = rightArm;
+      player.leftLeg = leftLeg;
+      player.rightLeg = rightLeg;
+      player.eyes = [leftEye, rightEye];
+      player.allLegs = legs; // Store all legs for reference
+      
+      return { player, robotMat: antBodyMat, robotAccentMat: antHeadMat, robotDarkMat: antLegMat, eyeMat: antEyeMat };
+    }
+    
+    // Create initial player character (default to robot, will be swapped based on mode)
+    let characterData = createRobotCharacter();
+    const player = characterData.player;
+    let robotMat = characterData.robotMat;
+    let robotAccentMat = characterData.robotAccentMat;
+    let robotDarkMat = characterData.robotDarkMat;
+    let eyeMat = characterData.eyeMat;
+    
+    // Initialize player position and add to scene
+    player.castShadow = true;
+    player.position.set(lanes[1], 0.5, 0); // Start at z=0, will move forward
+    scene.add(player);
+    let currentLane = 1;
+    let targetLaneX = lanes[1];
+    let currentLaneX = lanes[1]; // Current actual X position
+    const laneTransitionSpeed = 0.25; // Increased for smoother, faster transition
+    let laneVelocity = 0; // Velocity for smooth acceleration
+    const laneAcceleration = 0.4; // How fast to accelerate
+    const laneDamping = 0.85; // Damping for smooth deceleration
+    let playerZ = 0; // Player's world Z position
+    let runAnimationTime = 0; // For running animation
+
+    // Jump physics - shorter and smoother
+    let vy = 0; 
+    const jumpStrength = 0.65; // Increased jump height
+    const gravity = -0.018; // Reduced gravity for longer air time
+    let isGrounded = true;
+    const groundY = 0.5; // Ground level
+    const jumpSmoothness = 0.95; // Smooth deceleration factor
+    
+    // Slide physics
+    let isSliding = false;
+    const slideDuration = 30; // frames
+    let slideTimer = 0;
+    const normalHeight = 1.8;
+    const slideHeight = 0.9;
+
+    // Obstacles & powerups
+    const obstacles = [];
+    const powerups = []; // Includes coins and other powerups
+    const obstaclePool = [];
+    const powerupPool = [];
+
+    // Placeholder function for custom obstacle art
+    // Replace this function to load your custom 3D models or images as obstacles
+    function loadCustomObstacleArt(obstacleMesh) {
+      // PLACEHOLDER: Add your custom art loading code here
+      // Example options:
+      // 1. Load 3D model: const loader = new THREE.GLTFLoader(); loader.load('obstacle.glb', ...)
+      // 2. Load texture: const texture = new THREE.TextureLoader().load('obstacle.png'); obstacleMesh.material.map = texture;
+      // 3. Replace geometry: obstacleMesh.geometry = new THREE.CustomGeometry(...);
+      // 
+      // The obstacleMesh parameter is the mesh that will be used in the game
+      // Modify its geometry, material, or add child objects as needed
+      
+      // For now, returns the default obstacle (you can remove this when adding custom art)
+      return obstacleMesh;
+    }
+    
+    function makeObstacle(){
+      // Create a spiked obstacle - pyramid on top of a base
+      const obstacleGroup = new THREE.Group();
+      
+      // Base cylinder
+      const baseGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 8);
+      const baseMat = new THREE.MeshStandardMaterial({color:0x000000, metalness:0.3, roughness:0.7});
+      const base = new THREE.Mesh(baseGeo, baseMat);
+      base.position.y = 0.15;
+      base.castShadow = true;
+      base.receiveShadow = true;
+      obstacleGroup.add(base);
+      
+      // Spiked pyramid on top
+      const spikeGeo = new THREE.ConeGeometry(0.25, 0.5, 4);
+      const spikeMat = new THREE.MeshStandardMaterial({color:0x000000, metalness:0.5, roughness:0.6});
+      const spike = new THREE.Mesh(spikeGeo, spikeMat);
+      spike.position.y = 0.55;
+      spike.rotation.y = Math.PI / 4; // Rotate 45 degrees for visual interest
+      spike.castShadow = true;
+      obstacleGroup.add(spike);
+      
+      // Add small spikes around the base for extra detail
+      for(let i = 0; i < 4; i++){
+        const smallSpike = new THREE.Mesh(
+          new THREE.ConeGeometry(0.1, 0.2, 4),
+          spikeMat
+        );
+        const angle = (i / 4) * Math.PI * 2;
+        smallSpike.position.set(
+          Math.cos(angle) * 0.3,
+          0.35,
+          Math.sin(angle) * 0.3
+        );
+        smallSpike.castShadow = true;
+        obstacleGroup.add(smallSpike);
+      }
+      
+      obstacleGroup.castShadow = true;
+      obstacleGroup.receiveShadow = true;
+      
+      // Apply custom art if available
+      return loadCustomObstacleArt(obstacleGroup);
+    }
+    function makeLowObstacle(){
+      // Create a low barrier obstacle with spikes
+      const obstacleGroup = new THREE.Group();
+      
+      // Main barrier block
+      const barrierGeo = new THREE.BoxGeometry(0.8, 0.3, 0.8);
+      const barrierMat = new THREE.MeshStandardMaterial({color:0x000000, metalness:0.4, roughness:0.7});
+      const barrier = new THREE.Mesh(barrierGeo, barrierMat);
+      barrier.position.y = 0.15;
+      barrier.castShadow = true;
+      barrier.receiveShadow = true;
+      obstacleGroup.add(barrier);
+      
+      // Add spikes on top of the barrier
+      const spikeMat = new THREE.MeshStandardMaterial({color:0x000000, metalness:0.5, roughness:0.6});
+      for(let i = 0; i < 3; i++){
+        for(let j = 0; j < 3; j++){
+          const spike = new THREE.Mesh(
+            new THREE.ConeGeometry(0.08, 0.15, 4),
+            spikeMat
+          );
+          spike.position.set(
+            (i - 1) * 0.25,
+            0.375,
+            (j - 1) * 0.25
+          );
+          spike.castShadow = true;
+          obstacleGroup.add(spike);
+        }
+      }
+      
+      obstacleGroup.isLow = true; // Mark as low obstacle (requires sliding)
+      obstacleGroup.castShadow = true;
+      obstacleGroup.receiveShadow = true;
+      
+      // Apply custom art if available
+      return loadCustomObstacleArt(obstacleGroup);
+    }
+    // Texture loader for coins - load logo.png
+    const coinTextureLoader = new THREE.TextureLoader();
+    let coinTexture = null;
+    
+    // Load texture immediately (non-blocking)
+    coinTexture = coinTextureLoader.load(
+      'logo.png',
+      // onLoad
+      function(texture){
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.flipY = false;
+        texture.generateMipmaps = false;
+        console.log('Logo texture loaded successfully');
+        // Update all existing coins if any
+        for(const p of powerups){
+          if(p.type === 'coin' && p.material){
+            p.material.map = texture;
+            p.material.needsUpdate = true;
+          }
+        }
+      },
+      // onProgress
+      undefined,
+      // onError
+      function(error){
+        console.error('Error loading logo.png:', error);
+        coinTexture = null;
+      }
+    );
+    
+    function makeCoin(){
+      // Create plane geometry for sprite/logo display
+      const geo = new THREE.PlaneGeometry(0.8, 0.8);
+      
+      // Create material with logo texture
+      const mat = new THREE.MeshBasicMaterial({ 
+        map: coinTexture,
+        transparent: true,
+        side: THREE.DoubleSide,
+        color: 0x200b01, // Brown #200b01
+        alphaTest: 0.01,
+        depthWrite: false // Better transparency handling
+      });
+      
+      const m = new THREE.Mesh(geo, mat);
+      // Start with no rotation - will be adjusted by billboard effect to face camera
+      m.rotation.x = 0;
+      m.rotation.y = 0;
+      m.rotation.z = 0;
+      m.castShadow = false;
+      m.receiveShadow = false;
+      m.type = 'coin';
+      return m;
+    }
+    
+    // Powerup types
+    function makePowerup(type){
+      const group = new THREE.Group();
+      let mat, geo;
+      
+      if(type === 'speed'){
+        // Speed boost powerup (blue)
+        geo = new THREE.OctahedronGeometry(0.5);
+        mat = new THREE.MeshStandardMaterial({color:0x00a8ff, metalness:0.9, emissive:0x00a8ff, emissiveIntensity:0.3});
+      } else if(type === 'shield'){
+        // Shield powerup (purple)
+        geo = new THREE.IcosahedronGeometry(0.5);
+        mat = new THREE.MeshStandardMaterial({color:0x9b59b6, metalness:0.9, emissive:0x9b59b6, emissiveIntensity:0.3});
+      } else if(type === 'magnet'){
+        // Magnet powerup (yellow)
+        geo = new THREE.TorusGeometry(0.4, 0.15, 8, 16);
+        mat = new THREE.MeshStandardMaterial({color:0xf1c40f, metalness:0.9, emissive:0xf1c40f, emissiveIntensity:0.3});
+      } else {
+        // Default coin
+        return makeCoin();
+      }
+      
+      const m = new THREE.Mesh(geo, mat);
+      m.castShadow = true;
+      group.add(m);
+      group.type = type;
+      group.userData = {type: type};
+      return group;
+    }
+
+    // Detect device type (desktop vs mobile)
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+    const isDesktop = !isMobile;
+    
+    // Helpers to spawn
+    let spawnTimer = 0;
+    // Desktop: slower spawn rate, Mobile: faster spawn rate
+    let spawnInterval = isDesktop ? 70 : 50; // frames
+    // Desktop: slower initial speed, Mobile: faster initial speed
+    const initialBaseSpeed = isDesktop ? 0.5 : 0.75; // Desktop: 0.5, Mobile: 0.75
+    let baseSpeed = initialBaseSpeed; // base forward speed (increases gradually over time)
+    let speed = baseSpeed; // current speed (increases over time)
+    let speedMultiplier = 1.0;
+    const maxSpeedMultiplier = 2.5; // Max 2.5x speed (increased for faster gameplay)
+    // Desktop: slower increment, Mobile: faster increment
+    const speedIncrementPerFrame = isDesktop ? 0.0002 : 0.0003; // Desktop: 0.0002, Mobile: 0.0003
+    let score = 0;
+    const scoreEl = document.getElementById('score');
+    const speedEl = document.getElementById('speed');
+    const coinsEl = document.getElementById('coins');
+    
+    // Powerup tracking
+    let coinCount = 0;
+    
+    function updatePowerupStats(){
+      const coinCountEl = document.getElementById('coinCount');
+      if (coinCountEl) {
+        coinCountEl.innerText = coinCount;
+      }
+      // Update main scoreboard coin display
+      if (coinsEl) {
+        coinsEl.innerText = `Coins: ${coinCount}`;
+      }
+    }
+    
+    // Initialize coins display on page load
+    if (coinsEl) {
+      coinsEl.innerText = `Coins: 0`;
+    }
+    let distance = 0; // Track distance for speed increase
+
+    function spawnWave(zPos, pathRot = 0){
+      // Spawn obstacles with variety (zPos is world position ahead of player, straight path)
+      
+      // Reduced obstacle frequency - less obstacles per wave
+      const obsCount = Math.random() > 0.5 ? (Math.random() > 0.6 ? (Math.random() > 0.8 ? 2 : 1) : 1) : 0;
+      for(let i=0;i<obsCount;i++){
+        const lane = Math.floor(Math.random()*laneCount);
+        const isLow = Math.random() > 0.6; // 40% chance of low obstacle
+        
+        // Try to find a matching obstacle in the pool, otherwise create new one
+        let o = null;
+        if(isLow){
+          o = obstaclePool.find(obs => obs.isLow === true);
+          if(o){
+            obstaclePool.splice(obstaclePool.indexOf(o), 1);
+          } else {
+            o = makeLowObstacle();
+          }
+        } else {
+          o = obstaclePool.find(obs => !obs.isLow);
+          if(o){
+            obstaclePool.splice(obstaclePool.indexOf(o), 1);
+          } else {
+            o = makeObstacle();
+          }
+        }
+        
+        // Position obstacle (straight path) - adjusted for new obstacle heights
+        o.position.set(lanes[lane], isLow ? 0.15 : 0.4, zPos);
+        o.rotation.y = 0;
+        scene.add(o);
+        obstacles.push(o);
+      }
+      // Spawn powerups (only magnet powerups, displayed as "Coin") - reduced frequency
+      const powerupCount = Math.random()>0.4 ? 1 + Math.floor(Math.random()*3) : 0;
+      for(let i=0;i<powerupCount;i++){
+        const lane = Math.floor(Math.random()*laneCount);
+        // Only spawn magnet powerups
+        let powerup;
+        const poolMagnet = powerupPool.find(p => p.userData?.type === 'magnet');
+        if(poolMagnet){
+          powerup = poolMagnet;
+          powerupPool.splice(powerupPool.indexOf(poolMagnet), 1);
+        } else {
+          powerup = makePowerup('magnet');
+        }
+        // Position powerup (straight path)
+        const powerupZ = zPos + (Math.random()-0.5)*3;
+        powerup.position.set(lanes[lane], 0.6, powerupZ);
+        powerup.rotation.y = 0;
+        scene.add(powerup); 
+        powerups.push(powerup);
+      }
+    }
+
+    // Game state
+    let running = false; // Start with game paused, waiting for start button
+
+    // Controls
+    function moveLeft(){ 
+      if(currentLane<laneCount-1 && !isSliding){ 
+        currentLane++; 
+        targetLaneX = lanes[currentLane];
+      }
+    }
+    function moveRight(){ 
+      if(currentLane>0 && !isSliding){ 
+        currentLane--; 
+        targetLaneX = lanes[currentLane];
+      }
+    }
+    function doJump(){ 
+      if(isGrounded && !isSliding){ 
+        vy = jumpStrength; 
+        isGrounded=false; 
+      }
+    }
+    function doSlide(){
+      if(isGrounded && !isSliding){
+        isSliding = true;
+        slideTimer = slideDuration;
+        player.scale.y = slideHeight / normalHeight;
+        player.position.y = groundY - (normalHeight - slideHeight) / 2;
+      }
+    }
+
+    // Mode selection UI
+    const modeSelectionScreen = document.getElementById('modeSelectionScreen');
+    const modeCards = document.querySelectorAll('.modeCard');
+    
+    // Handle mode selection
+    modeCards.forEach(card => {
+      card.addEventListener('click', () => {
+        const selectedMode = card.getAttribute('data-mode');
+        currentMode = selectedMode;
+        
+        // Remove selected class from all cards
+        modeCards.forEach(c => c.classList.remove('selected'));
+        // Add selected class to clicked card
+        card.classList.add('selected');
+        
+        // Apply mode colors
+        applyModeColors(selectedMode);
+        
+        // Hide mode selection and show start screen after a brief delay
+        setTimeout(() => {
+          modeSelectionScreen.style.display = 'none';
+          startScreen.style.display = 'block';
+        }, 300);
+      });
+    });
+    
+    // Start game UI - declare early so event listeners can access
+    const startScreen = document.getElementById('startScreen');
+    const startBtn = document.getElementById('startBtn');
+    
+    function startGame(){
+      if (!currentMode) {
+        // If no mode selected, default to ben mode
+        currentMode = 'ben';
+        applyModeColors('ben');
+      }
+      running = true;
+      startScreen.style.display = 'none';
+      // Show score card when game starts
+      const ui = document.getElementById('ui');
+      if (ui) ui.style.display = 'block';
+      // Show pause button when game starts
+      const pauseBtn = document.getElementById('pauseBtn');
+      if (pauseBtn) pauseBtn.style.display = 'block';
+      // Initialize coins display when game starts
+      if (coinsEl) {
+        coinsEl.innerText = `Coins: 0`;
+      }
+      updatePowerupStats();
+    }
+    
+    startBtn.addEventListener('click', ()=>{ startGame(); });
+
+    window.addEventListener('keydown',(e)=>{
+      // ESC key to pause/resume
+      if(e.code==='Escape' || e.key==='Escape'){
+        if(running){
+          pauseGame();
+        } else if(pauseMenu && pauseMenu.style.display === 'block'){
+          resumeGame();
+        }
+        return;
+      }
+      
+      if(!running){
+        // Allow any key to start the game
+        if(startScreen.style.display !== 'none'){
+          startGame();
+        }
+        return;
+      }
+      if(e.code==='ArrowLeft' || e.key==='a' || e.key==='A') moveLeft();
+      if(e.code==='ArrowRight' || e.key==='d' || e.key==='D') moveRight();
+      if(e.code==='Space') doJump();
+      if(e.code==='ArrowDown' || e.key==='s' || e.key==='S') doSlide();
+    });
+    document.getElementById('leftBtn').addEventListener('click', ()=>moveLeft());
+    document.getElementById('rightBtn').addEventListener('click', ()=>moveRight());
+    document.getElementById('jumpBtn').addEventListener('click', ()=>doJump());
+    document.getElementById('slideBtn').addEventListener('click', ()=>doSlide());
+
+    // Touch controls - Temple Run style
+    let touchStartX=null, touchStartY=null, touchStartTime=null;
+    const minSwipeDistance = 40;
+    const maxSwipeTime = 300; // ms
+    
+    window.addEventListener('touchstart',(ev)=>{
+      const t = ev.touches[0]; 
+      touchStartX=t.clientX; 
+      touchStartY=t.clientY;
+      touchStartTime=Date.now();
+    });
+    
+    window.addEventListener('touchend',(ev)=>{
+      if(!touchStartX || !touchStartY) return;
+      const t = ev.changedTouches[0];
+      const dx = t.clientX - touchStartX; 
+      const dy = t.clientY - touchStartY;
+      const dt = Date.now() - touchStartTime;
+      
+      // Reset touch tracking
+      touchStartX = null;
+      touchStartY = null;
+      
+      if(!running){
+        // Allow any touch to start the game
+        if(startScreen.style.display !== 'none'){
+          startGame();
+        }
+        return;
+      }
+      
+      if(dt > maxSwipeTime) return; // Too slow, ignore
+      
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      
+      // Determine swipe direction
+      if(absDx > minSwipeDistance || absDy > minSwipeDistance){
+        if(absDx > absDy){
+          // Horizontal swipe
+          if(dx > 0) moveRight();
+          else moveLeft();
+        } else {
+          // Vertical swipe
+          if(dy < 0) doJump(); // Swipe up
+          else doSlide(); // Swipe down
+        }
+      } else {
+        // Tap - move based on screen position
+        if(t.clientX < innerWidth/2) moveLeft(); 
+        else moveRight();
+      }
+    });
+
+    // Enhanced collision detection
+    function intersectsBox(a,b){
+      const boxA = new THREE.Box3().setFromObject(a);
+      const boxB = new THREE.Box3().setFromObject(b);
+      if(!boxA.intersectsBox(boxB)) return false;
+      
+      // Special handling for low obstacles (can slide under)
+      if(b.isLow && isSliding) return false;
+      
+      // Special handling for normal obstacles (can jump over)
+      if(!b.isLow && !isGrounded) return false;
+      
+      return true;
+    }
+
+    // Game over UI
+    const message = document.getElementById('message');
+    const restartBtn = document.getElementById('restart');
+    restartBtn.addEventListener('click', ()=>{ resetGame(); });
+
+    // Pause menu UI
+    const pauseBtn = document.getElementById('pauseBtn');
+    const pauseMenu = document.getElementById('pauseMenu');
+    const resumeBtn = document.getElementById('resumeBtn');
+    const menuBtn = document.getElementById('menuBtn');
+    
+    function pauseGame() {
+      running = false;
+      if (pauseMenu) pauseMenu.style.display = 'block';
+    }
+    
+    function resumeGame() {
+      running = true;
+      if (pauseMenu) pauseMenu.style.display = 'none';
+    }
+    
+    function returnToMenu() {
+      running = false;
+      if (pauseMenu) pauseMenu.style.display = 'none';
+      if (pauseBtn) pauseBtn.style.display = 'none';
+      const ui = document.getElementById('ui');
+      if (ui) ui.style.display = 'none';
+      const modeSelectionScreen = document.getElementById('modeSelectionScreen');
+      if (modeSelectionScreen) modeSelectionScreen.style.display = 'block';
+    }
+    
+    if (pauseBtn) pauseBtn.addEventListener('click', pauseGame);
+    if (resumeBtn) resumeBtn.addEventListener('click', resumeGame);
+    if (menuBtn) menuBtn.addEventListener('click', returnToMenu);
+
+    function gameOver(){ 
+      running=false; 
+      if (pauseBtn) pauseBtn.style.display = 'none';
+      message.style.display='block'; 
+      document.getElementById('msgText').innerText = `Score: ${score}`; 
+    }
+
+    function resetGame(){
+      // clear obstacles/powerups
+      for(const o of obstacles){ scene.remove(o); }
+      for(const p of powerups){ scene.remove(p); }
+      obstacles.length=0; powerups.length=0; obstaclePool.length=0; powerupPool.length=0;
+      // reset player
+      currentLane=1; 
+      targetLaneX = lanes[1];
+      currentLaneX = lanes[1];
+      laneVelocity = 0;
+      player.position.x=lanes[1]; 
+      player.position.y=groundY;
+      player.position.z=0;
+      player.scale.y = 1;
+      player.rotation.y = 0;
+      playerZ = 0;
+      runAnimationTime = 0;
+      vy=0; 
+      isGrounded=true;
+      isSliding = false;
+      slideTimer = 0;
+      // reset game state
+      baseSpeed = isDesktop ? 0.5 : 0.75; // Reset to device-specific initial speed
+      speed = baseSpeed;
+      speedMultiplier = 1.0;
+      spawnInterval = isDesktop ? 70 : 50; // Reset to device-specific spawn interval
+      distance = 0;
+      score=0; 
+      scoreEl.innerText = `Score: ${score}`; 
+      speedEl.innerText = `Speed: 1.0x`;
+      // Reset powerup counts
+      coinCount = 0;
+      updatePowerupStats();
+      // Initialize coins display
+      if (coinsEl) coinsEl.innerText = `Coins: 0`;
+      
+      // Show score card when restarting
+      const ui = document.getElementById('ui');
+      if (ui) ui.style.display = 'block';
+      
+      running=true; 
+      message.style.display='none';
+      // Show pause button when restarting
+      if (pauseBtn) pauseBtn.style.display = 'block';
+      // Hide pause menu if visible
+      if (pauseMenu) pauseMenu.style.display = 'none';
+      spawnTimer = 0;
+      frame = 0;
+    }
+
+    // Main loop
+    let frame=0;
+    function animate(){
+      requestAnimationFrame(animate);
+      if(running){
+        frame++;
+        
+        // Progressive speed increase - starts slow and gradually increases
+        distance += speed;
+        
+        // Gradually increase base speed each frame for progressive difficulty
+        baseSpeed += speedIncrementPerFrame;
+        
+        // Speed increases very gradually over much longer distance (20000 for slower progression)
+        // Desktop: slower progression, Mobile: faster progression
+        const distanceDivisor = isDesktop ? 20000 : 13333;
+        speedMultiplier = 1.0 + Math.min((distance / distanceDivisor) * 1.0, maxSpeedMultiplier - 1.0);
+        speed = baseSpeed * speedMultiplier;
+        speedEl.innerText = `Speed: ${speedMultiplier.toFixed(1)}x`;
+        
+        // Player moves forward (straight path)
+        playerZ += speed;
+        player.position.z = playerZ;
+        
+        // Update ground tiles relative to player position (straight path)
+        for(let i=0;i<tilePool.length;i++){
+          const t = tilePool[i];
+          // Calculate desired position relative to player
+          const tileOffset = (i - tilesAhead/2) * tileLength;
+          const desiredZ = playerZ + tileOffset;
+          
+          // If tile is too far behind, recycle it ahead
+          if(desiredZ < playerZ - tilesAhead * tileLength){
+            // Find furthest ahead tile
+            let maxZ = playerZ;
+            for(let j=0;j<tilePool.length;j++){
+              if(tilePool[j] !== t && tilePool[j].position.z > maxZ){
+                maxZ = tilePool[j].position.z;
+              }
+            }
+            t.position.z = maxZ + tileLength;
+          } else {
+            // Update tile position
+            t.position.z = desiredZ;
+          }
+          t.position.x = 0;
+          t.rotation.y = 0;
+        }
+
+        // spawn periodically ahead of player (faster spawning as speed increases)
+        spawnTimer++;
+        // Desktop: slower minimum spawn, Mobile: faster minimum spawn
+        const minSpawnInterval = isDesktop ? 35 : 23;
+        const adjustedSpawnInterval = Math.max(minSpawnInterval, spawnInterval / speedMultiplier);
+        if(spawnTimer >= adjustedSpawnInterval){ 
+          spawnTimer=0; 
+          // Spawn ahead of player (straight path)
+          const spawnZ = playerZ + 50 + Math.random() * 30;
+          spawnWave(spawnZ, 0); 
+          // Desktop: slower base spawn, Mobile: faster base spawn
+          const baseSpawnValue = isDesktop ? 50 : 30;
+          spawnInterval = Math.max(minSpawnInterval, baseSpawnValue + Math.floor(Math.random()*40) / speedMultiplier); 
+        }
+
+        // Check obstacles & coins (they stay at world positions, player passes them)
+        for(let i=obstacles.length-1;i>=0;i--){ 
+          const o = obstacles[i];
+          // Calculate relative position (straight path)
+          const relativeZ = o.position.z - playerZ;
+          
+          // Animate obstacles - rotate them for visual interest
+          if(!o.isLow){
+            // Normal obstacles rotate around Y axis
+            o.rotation.y += 0.02;
+          } else {
+            // Low obstacles rotate more slowly
+            o.rotation.y += 0.01;
+          }
+          
+          // Remove obstacles that are far behind player
+          if(relativeZ < -10){ 
+            scene.remove(o); 
+            obstacles.splice(i,1); 
+            obstaclePool.push(o);
+            score += 5; 
+            scoreEl.innerText = `Score: ${score}`;
+          } else {
+            // Check collision (player passes obstacle)
+            if(Math.abs(relativeZ) < 2 && intersectsBox(player,o)){ gameOver(); }
+          }
+        }
+        // Check powerups (static, player moves past them)
+        for(let i=powerups.length-1;i>=0;i--){ 
+          const p = powerups[i];
+          // Calculate relative position (straight path)
+          const relativeZ = p.position.z - playerZ;
+          
+          // Animate powerups (rotate) - all powerups are static in world space
+          const isCoin = p.type === 'coin';
+          const powerupType = p.userData?.type;
+          
+          if(isCoin){
+            // Make coin (logo) always face camera (billboard effect)
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            const targetPosition = p.position.clone().add(direction);
+            p.lookAt(targetPosition);
+            // Ensure texture updates
+            if(p.material && p.material.map){
+              p.material.map.needsUpdate = true;
+            }
+          } else {
+            // Special powerups rotate and float (but stay at world position)
+            p.rotation.y += 0.05;
+            p.rotation.x += 0.03;
+            const baseY = 0.6;
+            p.position.y = baseY + Math.sin(frame * 0.1) * 0.2;
+          }
+          
+          // Remove powerups that are far behind player
+          if(relativeZ < -10){ 
+            scene.remove(p); 
+            powerups.splice(i,1); 
+            powerupPool.push(p); 
+          }
+          // Check if player collected powerup (check both Z distance and X lane alignment)
+          else if(Math.abs(relativeZ) < 2 && Math.abs(p.position.x - player.position.x) < 1.5){ 
+            // More lenient collision for powerups
+            const collision = intersectsBox(player, p);
+            if(collision){
+              scene.remove(p); 
+              powerups.splice(i,1); 
+              powerupPool.push(p);
+              
+              // Handle powerup collection (all are magnet powerups, tracked as "Coin")
+              score += 50;
+              coinCount++; // Track magnet as "Coin" on scoreboard
+              // Magnet effect (could attract nearby coins)
+              
+              scoreEl.innerText = `Score: ${score}`;
+              updatePowerupStats(); 
+            }
+          }
+        }
+
+        // Smooth lane transition (improved smoothness)
+        const distanceToTarget = targetLaneX - currentLaneX;
+        const smoothFactor = 0.25; // Higher = faster transition (0.1-0.3 range for smooth feel)
+        
+        if(Math.abs(distanceToTarget) > 0.01){
+          // Smooth interpolation towards target
+          currentLaneX += distanceToTarget * smoothFactor;
+          // Snap to target when very close to prevent jitter
+          if(Math.abs(distanceToTarget) < 0.05){
+            currentLaneX = targetLaneX;
+          }
+        } else {
+          currentLaneX = targetLaneX;
+        }
+        
+        // Update player position (straight path)
+        player.position.x = currentLaneX;
+
+        // Smooth jump physics - shorter and smoother
+        if(!isGrounded){ 
+          // Apply gravity
+          vy += gravity;
+          
+          // Apply smooth deceleration at peak for smoother arc
+          if(vy > 0){
+            vy *= jumpSmoothness; // Smooth deceleration when ascending
+          }
+          
+          // Update position smoothly
+          player.position.y += vy; 
+          
+          // Smooth landing
+          if(player.position.y <= groundY){ 
+            player.position.y = groundY; 
+            vy = 0; 
+            isGrounded = true;
+          }
+        } else {
+          // Ensure player stays on ground
+          if(player.position.y < groundY){
+            player.position.y = groundY;
+          }
+        }
+
+        // Slide mechanics
+        if(isSliding){
+          slideTimer--;
+          if(slideTimer <= 0){
+            isSliding = false;
+            player.scale.y = 1;
+            if(isGrounded) player.position.y = groundY;
+          }
+        }
+        
+        // Robot running animation
+        runAnimationTime += speed * 2;
+        if(isGrounded && !isSliding){
+          // Animate arms and legs for running
+          player.leftArm.rotation.x = Math.sin(runAnimationTime) * 0.5;
+          player.rightArm.rotation.x = -Math.sin(runAnimationTime) * 0.5;
+          player.leftLeg.rotation.x = -Math.sin(runAnimationTime) * 0.3;
+          player.rightLeg.rotation.x = Math.sin(runAnimationTime) * 0.3;
+          // Slight body bob
+          player.body.position.y = 0.6 + Math.abs(Math.sin(runAnimationTime * 2)) * 0.05;
+        } else {
+          // Reset to default when jumping/sliding
+          player.leftArm.rotation.x = 0;
+          player.rightArm.rotation.x = 0;
+          player.leftLeg.rotation.x = 0;
+          player.rightLeg.rotation.x = 0;
+          player.body.position.y = 0.6;
+        }
+        
+        // Rotate robot slightly when changing lanes (smooth rotation)
+        const laneDirection = targetLaneX - currentLaneX;
+        const laneRotation = Math.max(-0.3, Math.min(0.3, laneDirection * 0.1)); // Subtle rotation
+        player.rotation.y = laneRotation;
+
+        // Dynamic camera follow (Temple Run style) - follows player forward (straight path)
+        const cameraTargetX = player.position.x;
+        const cameraTargetY = 6 + (isSliding ? -1 : 0);
+        const cameraTargetZ = playerZ - 12;
+        
+        camera.position.x += (cameraTargetX - camera.position.x) * 0.1;
+        camera.position.y += (cameraTargetY - camera.position.y) * 0.08;
+        camera.position.z += (cameraTargetZ - camera.position.z) * 0.15;
+        
+        // Camera looks ahead of player
+        camera.lookAt(player.position.x, player.position.y + 1, playerZ + 5);
+      }
+      renderer.render(scene, camera);
+    }
+
+    // Add simple scenery
+    function addScenery(){
+      const boxGeo = new THREE.BoxGeometry(2,2,2);
+      const mat = new THREE.MeshStandardMaterial({color:0x223344});
+      for(let i=0;i<30;i++){
+        const b = new THREE.Mesh(boxGeo, mat);
+        b.scale.setScalar(0.5 + Math.random()*3);
+        b.position.set((Math.random()-0.5)*20, Math.random()*2, -Math.random()*200);
+        scene.add(b);
+      }
+    }
+    addScenery();
+
+    // Start
+    animate();
+  </script>
+  <footer id="footer">
+    Made with ❤️ by <a href="https://x.com/myacxt" target="_blank" rel="noopener noreferrer">Mia</a>
+  </footer>
+</body>
+</html>
+
